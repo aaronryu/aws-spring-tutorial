@@ -1,23 +1,52 @@
 package com.example.demo.service;
 
 import com.example.demo.config.AwsProperties;
+import com.example.demo.controller.dto.FileResponseDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
-public class S3UploadService {
+public class S3FileService {
     private final S3Client s3Client;
     private final AwsProperties properties;
+
+    /**
+     * 리스트 API: prefix로 필터링해 파일 목록을 반환
+     */
+    public List<FileResponseDto> list(String prefix, int maxKeys) {
+        String bucket = properties.getS3().getBucket();
+
+        ListObjectsV2Request request = ListObjectsV2Request.builder()
+                .bucket(bucket)
+                .prefix(prefix == null ? "" : prefix)
+                .maxKeys(maxKeys <= 0 ? 100 : maxKeys)
+                .build();
+
+        ListObjectsV2Response response = s3Client.listObjectsV2(request);
+
+        return response.contents().stream()
+                .filter(object -> !object.key().endsWith("/")) // 폴더 유사 key 제외
+                .map(object -> new FileResponseDto(
+                        object.key(),
+                        buildPublicUrl(bucket, properties.getRegion(), object.key()),
+                        object.size(),
+                        object.lastModified()
+                ))
+                .toList();
+    }
 
     /**
      * 파일을 S3에 업로드하고 퍼블릭 URL을 반환한다.
