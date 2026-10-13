@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=${DATASOURCE_DATABASE}
+      - POSTGRES_USER=${DATASOURCE_USERNAME}
+      - POSTGRES_PASSWORD=${DATASOURCE_PASSWORD}
+    ports:
+      - "5432:5432"
+#   volumes:
+#     - postgres-data:/var/lib/postgresql/data
+
+  spring-app:
+    build: .
+    # Docker Compose 내 environment 는 운영체제의 환경변수를 컨테이너로 옮겨주는 중간 통로의 역할
+    # = 운영체제로부터 받아 → 컨테이너로 건네주어 → Spring Boot 내 application.yml 내 변수로 주입되도록
+    #   - 따라서 아래 모든 환경변수들이 Pass-through 문법들을 사용하고 있다
+    environment:
+      - SPRING_PROFILES_ACTIVE
+      # 데이터베이스 접속을 위한 정보
+      - DATASOURCE_URL=jdbc:postgresql://postgres:5432/${DATASOURCE_DATABASE}?useSSL=false
+      - DATASOURCE_USERNAME
+      - DATASOURCE_PASSWORD
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+# 컨테이너를 완전히 삭제하고 다시 띄우더라도 백업된 데이터로 이어서 구동될 수 있도록
+# volumes:
+#  postgres-data:
