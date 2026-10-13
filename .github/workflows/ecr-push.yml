@@ -1,0 +1,72 @@
+name: Build & Push to ECR
+
+on:
+  push:
+    branches: [ "aws/ecr/upload" ]
+
+# 모든 step 에서 공통으로 쓰는 "비밀이 아닌" 값들 (Settings > Secrets and variables > Actions > Variables)
+#   - 값은 terraform output -json github_actions_vars 결과를 그대로 등록
+env:
+  AWS_REGION:             ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID:         ${{ vars.AWS_ACCOUNT_ID }}
+  ECR_REPOSITORY:         ${{ vars.ECR_REPOSITORY }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1) 소스 체크아웃
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # 2) JDK 먼저 설치
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # 3) Gradle 의존성과 Configuration Cache 를 자동으로 관리해주는 공식 캐시 액션
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # 4) Gradle Build
+      - name: Build with Gradle
+        run: |
+          chmod +x gradlew
+          ./gradlew clean build
+
+      # 5) AWS 자격 증명 설정 (Secrets 사용) = ECR Push + ECS 등록·배포 권한
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      # 6) (선택) 이미지 태그 구성: 커밋 해시 7자리 + latest < 최상단 env 끼리는 서로 참조할 수 없으므로, 조합 값은 여기서 GITHUB_ENV 로 만든다
+      - name: Prepare tags
+        run: |
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "IMAGE_TAG=${GITHUB_SHA::7}"                   >> "$GITHUB_ENV"
+          echo "ECR_REGISTRY=${ECR_REGISTRY}"                 >> "$GITHUB_ENV"
+          echo "REPO_URI=${ECR_REGISTRY}/${ECR_REPOSITORY}"   >> "$GITHUB_ENV"
+
+      # 7) ECR 로그인 (계정 ID를 Secret에서 참조)
+      - name: ECR Login
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+
+      # 8) Docker 빌드 (앞 단계에서 만든 JAR을 이미지에 복사)
+      - name: Docker build
+        run: |
+          docker build -t "$REPO_URI:$IMAGE_TAG" -t "$REPO_URI:latest" .
+
+      # 9) ECR 푸시
+      - name: Docker push
+        run: |
+          docker push "$REPO_URI:$IMAGE_TAG"
+          docker push "$REPO_URI:latest"
