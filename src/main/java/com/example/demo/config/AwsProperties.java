@@ -17,6 +17,7 @@ public class AwsProperties {
     @NotBlank
     private String region;
     private Credentials credentials;
+    private S3 s3;
 
     @Setter
     @Getter
@@ -25,6 +26,13 @@ public class AwsProperties {
         private String accessKey;
         @NotBlank
         private String secretKey;
+    }
+
+    @Setter
+    @Getter
+    public static class S3 {
+        @NotBlank
+        private String bucket;
     }
 }
 
