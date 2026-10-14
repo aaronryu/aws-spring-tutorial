@@ -23,6 +23,10 @@ services:
       - DATASOURCE_URL=jdbc:postgresql://postgres:5432/${DATASOURCE_DATABASE}?useSSL=false
       - DATASOURCE_USERNAME
       - DATASOURCE_PASSWORD
+      # Ⓐ 컨테이너 내 AWS SDK 사용 / Ⓑ 운영체제 내 AWS CLI 사용 = 두 환경변수명 동일
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_REGION
     ports:
       - "8080:8080"
     depends_on:

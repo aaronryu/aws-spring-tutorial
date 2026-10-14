@@ -8,3 +8,9 @@ export DATASOURCE_URL=
 export DATASOURCE_DATABASE=
 export DATASOURCE_USERNAME=
 export DATASOURCE_PASSWORD=
+
+# ① 현재 프로젝트의 루트 디렉토리에서 AWS CLI 명령어도 사용할때 활용할 수 있도록
+# ② AwsProperties 클래스 내 @Configuration 통해 환경변수값을 가져다 변수로 활용할 수 있도록
+export AWS_ACCESS_KEY_ID=
+export AWS_SECRET_ACCESS_KEY=
+export AWS_REGION='ap-northeast-2'
