@@ -1,20 +1,18 @@
 package com.example.demo.service;
 
 import com.example.demo.config.AwsProperties;
-import com.example.demo.controller.dto.FileResponseDto;
 import lombok.RequiredArgsConstructor;
+import lombok.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.time.LocalDate;
-import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -24,34 +22,9 @@ public class S3FileService {
     private final AwsProperties properties;
 
     /**
-     * 리스트 API: prefix로 필터링해 파일 목록을 반환
-     */
-    public List<FileResponseDto> list(String prefix, int maxKeys) {
-        String bucket = properties.getS3().getBucket();
-
-        ListObjectsV2Request request = ListObjectsV2Request.builder()
-                .bucket(bucket)
-                .prefix(prefix == null ? "" : prefix)
-                .maxKeys(maxKeys <= 0 ? 100 : maxKeys)
-                .build();
-
-        ListObjectsV2Response response = s3Client.listObjectsV2(request);
-
-        return response.contents().stream()
-                .filter(object -> !object.key().endsWith("/")) // 폴더 유사 key 제외
-                .map(object -> new FileResponseDto(
-                        object.key(),
-                        buildPublicUrl(bucket, properties.getRegion(), object.key()),
-                        object.size(),
-                        object.lastModified()
-                ))
-                .toList();
-    }
-
-    /**
      * 파일을 S3에 업로드하고 퍼블릭 URL을 반환한다.
      */
-    public String store(MultipartFile multipartFile) {
+    public S3UploadedMeta store(MultipartFile multipartFile) {
         try {
             // 1) 키 생성 규칙: images/YYYY/MM/UUID.원본확장자
             String key = makeS3ObjectKey("images", multipartFile);
@@ -71,11 +44,29 @@ public class S3FileService {
             );
 
             // 4) 퍼블릭 URL 생성 후 반환
-            return buildPublicUrl(properties.getS3().getBucket(), properties.getRegion(), key);
+            String url = buildPublicUrl(properties.getS3().getBucket(), properties.getRegion(), key);
+            return new S3UploadedMeta(
+                    key,
+                    url,
+                    multipartFile.getSize(),
+                    multipartFile.getContentType(),
+                    multipartFile.getOriginalFilename(),
+                    Instant.now()
+            );
         } catch (Exception e) {
             throw new RuntimeException("S3 업로드 실패", e);
         }
         // ⚠ 주입받은 s3Client 는 닫지 말 것 (Bean 공용)
+    }
+
+    @Value
+    public static class S3UploadedMeta {
+        String key;
+        String url;
+        long size;
+        String contentType;
+        String originalFilename;
+        Instant uploadedAt;
     }
 
     private String makeS3ObjectKey(String rootPath, MultipartFile multipartFile) {
