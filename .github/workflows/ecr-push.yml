@@ -1,15 +1,27 @@
-name: Build & Push to ECR
+name: Build & Push to ECR & Deploy on ECS
 
 on:
   push:
-    branches: [ "aws/ecr/upload" ]
+    branches: [ "aws/ecr-ecs/upload-and-deploy" ]
 
 # 모든 step 에서 공통으로 쓰는 "비밀이 아닌" 값들 (Settings > Secrets and variables > Actions > Variables)
 #   - 값은 terraform output -json github_actions_vars 결과를 그대로 등록
 env:
   AWS_REGION:             ${{ vars.AWS_REGION }}
   AWS_ACCOUNT_ID:         ${{ vars.AWS_ACCOUNT_ID }}
+  AWS_S3_BUCKET:          ${{ vars.AWS_S3_BUCKET }}
+  ECR_REGISTRY:           ${{ vars.ECR_REGISTRY }}
   ECR_REPOSITORY:         ${{ vars.ECR_REPOSITORY }}
+  ECR_REPOSITORY_URL:     ${{ vars.ECR_REPOSITORY_URL }}
+  ECS_CLUSTER:            ${{ vars.ECS_CLUSTER }}
+  ECS_SERVICE:            ${{ vars.ECS_SERVICE }}
+  ECS_TASKDEF:            ${{ vars.ECS_TASKDEF }}
+  ECS_CONTAINER:          ${{ vars.ECS_CONTAINER }}
+  ECS_EXECUTION_ROLE_ARN: ${{ vars.ECS_EXECUTION_ROLE_ARN }}
+  # SPRING_PROFILES_ACTIVE: production # 주의 : 여기에 넣지 않도록하라
+  #   - ./gradlew clean build 시 스프링이 자동적으로 본 프로파일 설정을 가져다 사용해서
+  #     테스트 시 application-production.yml 파일을 참조하여 예상치 못한 문제가 발생한다
+  #     통합 테스트는 어떤 프로파일 설정없이 Testcontainers 만 사용하여 테스트만 진행하면 된다 별개의 설정은 필요없다
 
 jobs:
   build-and-push:
@@ -48,10 +60,7 @@ jobs:
       # 6) (선택) 이미지 태그 구성: 커밋 해시 7자리 + latest < 최상단 env 끼리는 서로 참조할 수 없으므로, 조합 값은 여기서 GITHUB_ENV 로 만든다
       - name: Prepare tags
         run: |
-          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           echo "IMAGE_TAG=${GITHUB_SHA::7}"                   >> "$GITHUB_ENV"
-          echo "ECR_REGISTRY=${ECR_REGISTRY}"                 >> "$GITHUB_ENV"
-          echo "REPO_URI=${ECR_REGISTRY}/${ECR_REPOSITORY}"   >> "$GITHUB_ENV"
 
       # 7) ECR 로그인 (계정 ID를 Secret에서 참조)
       - name: ECR Login
@@ -63,10 +72,67 @@ jobs:
       # 8) Docker 빌드 (앞 단계에서 만든 JAR을 이미지에 복사)
       - name: Docker build
         run: |
-          docker build -t "$REPO_URI:$IMAGE_TAG" -t "$REPO_URI:latest" .
+          docker build -t "$ECR_REPOSITORY_URL:$IMAGE_TAG" -t "$ECR_REPOSITORY_URL:latest" .
 
       # 9) ECR 푸시
       - name: Docker push
         run: |
-          docker push "$REPO_URI:$IMAGE_TAG"
-          docker push "$REPO_URI:latest"
+          docker push "$ECR_REPOSITORY_URL:$IMAGE_TAG"
+          docker push "$ECR_REPOSITORY_URL:latest"
+
+      # 10) 작업 정의 템플릿 렌더링 (envsubst로 변수 치환)
+      #     - ecs-task-def.json 내 ${AWS_ACCOUNT_ID}, ${AWS_REGION}, ${IMAGE_TAG} 치환
+      - name: Render task definition
+        env:
+          SPRING_PROFILES_ACTIVE:    develop # 추후 Flyway 의존성 추가 및 db/migration 추가 후 'production' 으로 실행
+          # 스프링 어플리케이션 내 운영존 AWS RDS 접속을 위한 정보
+          DATASOURCE_URL:            ${{ secrets.DATASOURCE_URL }}
+          DATASOURCE_USERNAME:       ${{ secrets.DATASOURCE_USERNAME }}
+          DATASOURCE_PASSWORD:       ${{ secrets.DATASOURCE_PASSWORD }}
+          # 스프링 앱 내 AWS S3 사용을 위한 IAM 사용자 계정 정보 - Github Actions 배포 인스턴스가 사용하는 AWS CLI 용 계정과 구분하기 위해 APP_ 추가
+          APP_AWS_ACCESS_KEY_ID:     ${{ secrets.APP_AWS_ACCESS_KEY_ID }}
+          APP_AWS_SECRET_ACCESS_KEY: ${{ secrets.APP_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          # 치환할 변수만 명시 (그 외 $ 문자열은 건드리지 않음)
+          # envsubst < ecs-task-def.json > ecs-task-def.rendered.json # 이렇게 사용해도 되긴하는데 아래가 좀 더 명시적
+          envsubst '${ECS_TASKDEF} ${ECS_CONTAINER} ${ECS_EXECUTION_ROLE_ARN}
+                    ${ECR_REGISTRY} ${ECR_REPOSITORY} ${IMAGE_TAG} ${AWS_REGION}
+                    ${SPRING_PROFILES_ACTIVE} ${DATASOURCE_URL} ${DATASOURCE_USERNAME} ${DATASOURCE_PASSWORD}
+                    ${APP_AWS_ACCESS_KEY_ID} ${APP_AWS_SECRET_ACCESS_KEY} ${AWS_S3_BUCKET}' \
+            < ecs-task-def.json > ecs-task-def.rendered.json
+        
+          # 치환되지 않고 남은 ${...} 가 있으면 배포 중단 (목록 누락 / 오타 방지)
+          if grep -n '\${' ecs-task-def.rendered.json; then
+            echo "::error::치환되지 않은 변수가 남아 있습니다"; exit 1
+          fi
+
+      # 11) 작업 정의 업데이트 (새 리비전 등록)
+      - name: 작업 정의 업데이트
+        run: |
+          aws ecs register-task-definition \
+            --cli-input-json file://ecs-task-def.rendered.json
+
+      # 12) ECS 서비스 업데이트 (새 작업 정의 강제 배포)
+      - name: ECS 서비스 업데이트
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$ECS_TASKDEF" \
+            --desired-count 1 \
+            --force-new-deployment
+
+      # 13) 배포 완료 대기 (서비스가 안정 상태가 될 때까지)
+      - name: ECS 배포 완료 대기
+        run: |
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+
+      # 14) 배포 상태 확인 (디플로이먼트 요약 출력)
+      - name: ECS 배포 상태 확인
+        run: |
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query "services[0].deployments"

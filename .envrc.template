@@ -5,7 +5,6 @@ export SPRING_PROFILES_ACTIVE=
 # Docker Compose 내 데이터베이스 컨테이너를 구동하여 접속하기 위한 정보
 # HOST / DATABASE 명을 나누지 않고 하나의 URL 로 하는 이유는 H2 처럼 호스트나 포트 개념이 없는 데이터베이스도 있기 때문
 export DATASOURCE_URL=
-export DATASOURCE_DATABASE=
 export DATASOURCE_USERNAME=
 export DATASOURCE_PASSWORD=
 

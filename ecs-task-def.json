@@ -1,0 +1,57 @@
+{
+  "family": "${ECS_TASKDEF}",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "containerDefinitions": [
+    {
+      "name": "${ECS_CONTAINER}",
+      "image": "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
+      "cpu": 512,
+      "memory": 1024,
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "SPRING_PROFILES_ACTIVE",
+          "value": "${SPRING_PROFILES_ACTIVE}"
+        },
+        {
+          "name": "DATASOURCE_URL",
+          "value": "${DATASOURCE_URL}"
+        },
+        {
+          "name": "DATASOURCE_USERNAME",
+          "value": "${DATASOURCE_USERNAME}"
+        },
+        {
+          "name": "DATASOURCE_PASSWORD",
+          "value": "${DATASOURCE_PASSWORD}"
+        },
+        {
+          "name": "AWS_ACCESS_KEY_ID",
+          "value": "${APP_AWS_ACCESS_KEY_ID}"
+        },
+        {
+          "name": "AWS_SECRET_ACCESS_KEY",
+          "value": "${APP_AWS_SECRET_ACCESS_KEY}"
+        },
+        {
+          "name": "AWS_REGION",
+          "value": "${AWS_REGION}"
+        },
+        {
+          "name": "AWS_S3_BUCKET",
+          "value": "${AWS_S3_BUCKET}"
+        }
+      ]
+    }
+  ],
+  "executionRoleArn": "${ECS_EXECUTION_ROLE_ARN}"
+}
