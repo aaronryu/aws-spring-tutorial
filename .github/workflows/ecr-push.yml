@@ -1,35 +1,42 @@
-name: Build & Push to ECR
+name: Build & Push to ECR (Secrets with Account ID) &
 
 on:
   push:
-    branches: [ "aws/ecr/upload" ]
+    branches: [ "aws/ecr-ecs/upload-and-deploy" ]
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
+    # Settings > Actions > General > Workflow permissions
+    # 기본 설정값이 "Read and write permissions" 이기때문에 불필요한 쓰기 write 권한 제외하기 위함
+    permissions:
+      contents: read
+
     steps:
+      # 1) 소스 체크아웃
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Grant execute permission
         run: chmod +x gradlew
 
-      #  JDK 먼저 설치
+      # 2) JDK 먼저 설치
       - name: Set up JDK 17
         uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      #  Gradle 의존성과 Configuration Cache 를 자동으로 관리해주는 공식 액션
+      # 3) Gradle 의존성과 Configuration Cache 를 자동으로 관리해주는 공식 캐시 액션
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      #  Gradle Build
+      # 4) Gradle Build
       - name: Build with Gradle
         run: ./gradlew clean build
 
+      # 5) AWS 자격 증명 설정 (Secrets 사용)
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -37,22 +44,83 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_REGION }}
 
+      # 6) ECR 로그인 (계정 ID를 Secret에서 참조)
       - name: ECR Login
         run: |
           aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
             | docker login --username AWS --password-stdin \
               ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
 
+      # 7) (선택) 이미지 태그 구성: 커밋 해시 7자리 + latest
       - name: Prepare tags
         run: |
           echo "IMAGE_TAG=${GITHUB_SHA::7}" >> $GITHUB_ENV
           echo "REPO_URI=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/codeit-tutorial" >> $GITHUB_ENV
 
+      # 8) Docker 빌드 (앞 단계에서 만든 JAR을 이미지에 복사)
       - name: Docker build
         run: |
           docker build -t "$REPO_URI:$IMAGE_TAG" -t "$REPO_URI:latest" .
 
+      # 9) ECR 푸시
       - name: Docker push
         run: |
           docker push "$REPO_URI:$IMAGE_TAG"
           docker push "$REPO_URI:latest"
+
+      # 10) 작업 정의 템플릿 렌더링 (envsubst로 변수 치환)
+      #     - ecs-task-def.json 내 ${AWS_ACCOUNT_ID}, ${AWS_REGION}, ${IMAGE_TAG} 치환
+      - name: Render task definition
+        env:
+          SPRING_PROFILES_ACTIVE: "production"
+          ECS_TASKDEF: "codeit-taskdef"
+          ECS_CONTAINER: "codeit-container"
+          ECR_REPOSITORY: "codeit-tutorial"
+          # 스프링 어플리케이션 내 운영존 AWS RDS 접속을 위한 정보
+          DATASOURCE_URL: ${{ secrets.DATASOURCE_URL }}
+          DATASOURCE_DATABASE: ${{ secrets.DATASOURCE_DATABASE }}
+          DATASOURCE_USERNAME: ${{ secrets.DATASOURCE_USERNAME }}
+          DATASOURCE_PASSWORD: ${{ secrets.DATASOURCE_PASSWORD }}
+          # 스프링 어플리케이션 내 AWS S3 사용을 위한
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+          # AWS ECS 배포를 위한 ecs-task-def.json 내 AWS ECR 및 Role 관련하여 필요 변수
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y gettext-base
+          envsubst < ecs-task-def.json > ecs-task-def.rendered.json
+
+      # 11) 작업 정의 업데이트 (새 리비전 등록)
+      - name: 작업 정의 업데이트
+        run: |
+          aws ecs register-task-definition \
+            --cli-input-json file://ecs-task-def.rendered.json
+
+      # 12) ECS 서비스 업데이트 (새 작업 정의 강제 배포)
+      - name: ECS 서비스 업데이트
+        env:
+          ECS_TASKDEF: "codeit-taskdef"
+        run: |
+          aws ecs update-service \
+            --cluster ${{ secrets.ECS_CLUSTER }} \
+            --service ${{ secrets.ECS_SERVICE }} \
+            --task-definition "$ECS_TASKDEF" \
+            --force-new-deployment
+
+      # 13) 배포 완료 대기 (서비스가 안정 상태가 될 때까지)
+      - name: ECS 배포 완료 대기
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ secrets.ECS_CLUSTER }} \
+            --services ${{ secrets.ECS_SERVICE }}
+
+      # 14) 배포 상태 확인 (디플로이먼트 요약 출력)
+      - name: ECS 배포 상태 확인
+        run: |
+          aws ecs describe-services \
+            --cluster ${{ secrets.ECS_CLUSTER }} \
+            --services ${{ secrets.ECS_SERVICE }} \
+            --query "services[0].deployments"
