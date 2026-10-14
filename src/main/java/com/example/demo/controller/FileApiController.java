@@ -2,7 +2,7 @@ package com.example.demo.controller;
 
 import com.example.demo.config.AwsProperties;
 import com.example.demo.controller.dto.FileResponseDto;
-import com.example.demo.service.S3FileService;
+import com.example.demo.service.FileService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -14,31 +14,47 @@ import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignReques
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/files")
 @RequiredArgsConstructor
 public class FileApiController {
-    private final S3FileService s3FileService;
+    private final FileService fileService;
     private final S3Presigner s3Presigner;
     private final AwsProperties properties;
 
     @PostMapping("/upload")
-    public ResponseEntity<Void> upload(@RequestParam("file") MultipartFile file) {
-        String url = s3FileService.store(file);
-        return ResponseEntity.created(URI.create(url)).build();
+    public ResponseEntity<FileResponseDto> upload(@RequestParam("file") MultipartFile file) {
+        FileResponseDto response = fileService.uploadAndSave(file); // S3 업로드 + DB 저장
+        return ResponseEntity
+                .created(URI.create("/files/" + response.id()))
+                .body(response);
     }
 
     /**
-     * 파일 목록 JSON
-     * 예: GET /files/list?prefix=images/2025/08&max=50
+     * 파일 목록 - 최신 50개 목록을 AWS S3 가 아닌 AWS RDS 데이터베이스로부터 조회
+     * 예: GET /files/list
      */
     @GetMapping("/list")
     public List<FileResponseDto> list(
-            @RequestParam(value = "prefix", required = false) String prefix,
-            @RequestParam(value = "max", required = false, defaultValue = "100") int max
+            @RequestParam(value = "prefix", required = false) String prefix
+//          @RequestParam(value = "max", required = false, defaultValue = "100") int max
     ) {
-        return s3FileService.list(prefix, max);
+        return fileService.list(prefix);
+    }
+
+    /** 단건 조회 */
+    @GetMapping("/{id}")
+    public FileResponseDto get(@PathVariable UUID id) {
+        return fileService.findById(id);
+    }
+
+    /** 삭제 */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable UUID id) {
+        fileService.delete(id);
+        return ResponseEntity.noContent().build();
     }
 
     /**
