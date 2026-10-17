@@ -54,7 +54,16 @@
           "name": "AWS_S3_BUCKET",
           "value": "${AWS_S3_BUCKET}"
         }
-      ]
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/codeit-tutorial",
+          "awslogs-create-group": "true",
+          "awslogs-region": "ap-northeast-2",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
     }
   ],
   "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecs-task-execution-role"
