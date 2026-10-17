@@ -2,7 +2,7 @@ name: Build & Push to ECR & Deploy on ECS
 
 on:
   push:
-    branches: [ "aws/ecr-ecs/upload-and-deploy" ]
+    branches: [ "aws/ecr-ecs/add-cloudwatch" ]
 
 # 모든 step 에서 공통으로 쓰는 "비밀이 아닌" 값들 (Settings > Secrets and variables > Actions > Variables)
 #   - 값은 terraform output -json github_actions_vars 결과를 그대로 등록
@@ -18,6 +18,7 @@ env:
   ECS_TASKDEF:            ${{ vars.ECS_TASKDEF }}
   ECS_CONTAINER:          ${{ vars.ECS_CONTAINER }}
   ECS_EXECUTION_ROLE_ARN: ${{ vars.ECS_EXECUTION_ROLE_ARN }}
+  ECS_LOG_GROUP:          ${{ vars.ECS_LOG_GROUP }}
   # SPRING_PROFILES_ACTIVE: production # 주의 : 여기에 넣지 않도록하라
   #   - ./gradlew clean build 시 스프링이 자동적으로 본 프로파일 설정을 가져다 사용해서
   #     테스트 시 application-production.yml 파일을 참조하여 예상치 못한 문제가 발생한다
@@ -95,7 +96,7 @@ jobs:
         run: |
           # 치환할 변수만 명시 (그 외 $ 문자열은 건드리지 않음)
           # envsubst < ecs-task-def.json > ecs-task-def.rendered.json # 이렇게 사용해도 되긴하는데 아래가 좀 더 명시적
-          envsubst '${ECS_TASKDEF} ${ECS_CONTAINER} ${ECS_EXECUTION_ROLE_ARN}
+          envsubst '${ECS_TASKDEF} ${ECS_CONTAINER} ${ECS_EXECUTION_ROLE_ARN} ${ECS_LOG_GROUP}
                     ${ECR_REGISTRY} ${ECR_REPOSITORY} ${IMAGE_TAG} ${AWS_REGION}
                     ${SPRING_PROFILES_ACTIVE} ${DATASOURCE_URL} ${DATASOURCE_USERNAME} ${DATASOURCE_PASSWORD}
                     ${APP_AWS_ACCESS_KEY_ID} ${APP_AWS_SECRET_ACCESS_KEY} ${AWS_S3_BUCKET}' \

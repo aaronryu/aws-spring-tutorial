@@ -50,7 +50,15 @@
           "name": "AWS_S3_BUCKET",
           "value": "${AWS_S3_BUCKET}"
         }
-      ]
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "${ECS_LOG_GROUP}",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
     }
   ],
   "executionRoleArn": "${ECS_EXECUTION_ROLE_ARN}"
